@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Document</title>
+</head>
+<body>
+    <!-- 
+        所谓的 Virtual DOM 算法。包括几个步骤：
+            1、用 JavaScript 对象结构表示 DOM 树的结构；然后用这个树构建一个真正的 DOM 树，插到文档当中
+            2、当状态变更的时候，重新构造一棵新的对象树。然后用新的树和旧的树进行比较，记录两棵树差异
+            3、把2所记录的差异应用到步骤1所构建的真正的DOM树上，视图就更新了
+     -->
+</body>
+<script>
+    function Element(tagName, props, children) {
+        this.tagName = tagName
+        this.props = props
+        this.children = children
+    }
+    Element.prototype.render = function () {
+        var el = document.createElement(this.tagName) // 根据tagName构建
+        var props = this.props
+
+        for (var propName in props) { // 设置节点的DOM属性
+            var propValue = props[propName]
+            el.setAttribute(propName, propValue)
+        }
+
+        var children = this.children || []
+
+        children.forEach(function (child) {
+            var childEl = (child instanceof Element)
+            ? child.render() // 如果子节点也是虚拟DOM，递归构建DOM节点
+            : document.createTextNode(child) // 如果字符串，只构建文本节点
+            el.appendChild(childEl)
+        })
+
+        return el
+    }
+    var el = function (tagName, props, children){
+        return new Element(tagName, props,children)
+    }
+    var ul = el('ul', {id: 'list'}, [
+        el('li', {class: 'item'}, ['Item 1']),
+        el('li', {class: 'item'}, ['Item 2']),
+        el('li', {class: 'item'}, ['Item 3'])
+    ])
+    var ulRoot = ul.render()
+    document.body.appendChild(ulRoot)
+    console.log(ul)
+    /*步骤二：比较两棵虚拟DOM树的差异
+       div只会和同一层级的div对比，第二层级的只会跟第二层级对比
+       深度优先遍历，记录差异
+       对新旧两棵树进行一个深度优先的遍历，这样每个节点都会有一个唯一的标记：
+    */
+   // diff 函数，对比两棵树
+    function diff (oldTree, newTree) {
+    var index = 0 // 当前节点的标志
+    var patches = {} // 用来记录每个节点差异的对象
+    dfsWalk(oldTree, newTree, index, patches)
+    return patches
+    }
+
+    // 对两棵树进行深度优先遍历
+    function dfsWalk (oldNode, newNode, index, patches) {
+    // 对比oldNode和newNode的不同，记录下来
+    patches[index] = [...patches];
+    diffChildren(oldNode.children, newNode.children, index, patches)
+    }
+
+    // 遍历子节点
+    function diffChildren (oldChildren, newChildren, index, patches) {
+        var leftNode = null
+        var currentNodeIndex = index
+        oldChildren.forEach(function (child, i) {
+            var newChild = newChildren[i]
+            currentNodeIndex = (leftNode && leftNode.count) // 计算节点的标识
+            ? currentNodeIndex + leftNode.count + 1
+            : currentNodeIndex + 1
+            dfsWalk(child, newChild, currentNodeIndex, patches) // 深度遍历子节点
+            leftNode = child
+        })
+    }
+    /* 
+    例如，上面的div和新的div有差异，当前的标记是0，那么：
+     patches[0] = [{difference}, {difference}, ...] // 用数组存储新旧节点的不同
+    */
+
+    /*
+     差异类型
+     上面说的节点的差异指的是什么呢？对 DOM 操作可能会：
+
+        1、替换掉原来的节点，例如把上面的div换成了section
+        2、移动、删除、新增子节点，例如上面div的子节点，把p和ul顺序互换
+        3、修改了节点的属性
+        4、对于文本节点，文本内容可能会改变。例如修改上面的文本节点2内容为Virtual DOM 2。
+    */
+//步骤三：把差异应用到真正的DOM树上
+  /*
+  因为步骤一所构建的 JavaScript 对象树和render出来真正的DOM树的信息、结构是一样的。
+  所以我们可以对那棵DOM树也进行深度优先的
+  遍历，遍历的时候从步骤二生成的patches对象中找出当前遍历的节点差异，然后进行 DOM 操作。
+  */
+  function patch (node, patches) {
+  var walker = {index: 0}
+    dfsWalk(node, walker, patches)
+    }
+
+    function dfsWalk (node, walker, patches) {
+    var currentPatches = patches[walker.index] // 从patches拿出当前节点的差异
+
+    var len = node.childNodes
+        ? node.childNodes.length
+        : 0
+    for (var i = 0; i < len; i++) { // 深度遍历子节点
+        var child = node.childNodes[i]
+        walker.index++
+        dfsWalk(child, walker, patches)
+    }
+
+    if (currentPatches) {
+        applyPatches(node, currentPatches) // 对当前节点进行DOM操作
+    }
+    }
+//applyPatches，根据不同类型的差异对当前节点进行 DOM 操作：
+    function applyPatches (node, currentPatches) {
+    currentPatches.forEach(function (currentPatch) {
+        switch (currentPatch.type) {
+        case REPLACE:
+            node.parentNode.replaceChild(currentPatch.node.render(), node)
+            break
+        case REORDER:
+            reorderChildren(node, currentPatch.moves)
+            break
+        case PROPS:
+            setProps(node, currentPatch.props)
+            break
+        case TEXT:
+            node.textContent = currentPatch.content
+            break
+        default:
+            throw new Error('Unknown patch type ' + currentPatch.type)
+        }
+    })
+    }
+   // Virtual DOM 算法主要是实现上面步骤的三个函数：element，diff，patch。然后就可以实际的进行使用：
+
+// 1. 构建虚拟DOM
+var tree = el('div', {'id': 'container'}, [
+    el('h1', {style: 'color: blue'}, ['simple virtal dom']),
+    el('p', ['Hello, virtual-dom']),
+    el('ul', [el('li')])
+])
+
+// 2. 通过虚拟DOM构建真正的DOM
+var root = tree.render()
+document.body.appendChild(root)
+
+// 3. 生成新的虚拟DOM
+var newTree = el('div', {'id': 'container'}, [
+    el('h1', {style: 'color: red'}, ['simple virtal dom']),
+    el('p', ['Hello, virtual-dom']),
+    el('ul', [el('li'), el('li')])
+])
+
+// 4. 比较两棵虚拟DOM树的不同
+var patches = diff(tree, newTree)
+
+// 5. 在真正的DOM元素上应用变更
+patch(root, patches)
+</script>
+</html>
